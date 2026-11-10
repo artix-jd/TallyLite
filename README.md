@@ -1,6 +1,6 @@
 # TallyLite
 
-A local-first Windows desktop bookkeeping and accounting application built for speed, privacy, and full double-entry control.
+TallyLite is a lightning-fast, 100% offline-first double-entry bookkeeping and accounting software for Windows. Built as a private, local-first alternative to cloud SaaS and Tally.
 
 ## For Windows users
 
