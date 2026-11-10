@@ -2,30 +2,23 @@
 
 A local-first Windows desktop bookkeeping and accounting application.
 
-## Features
-- Multiple books
-- Income, expenses and transfers
-- Ledgers and balances
-- Daybook and ledger statements
-- Trial Balance, Profit & Loss and Balance Sheet
-- Local backups and CSV exports
+## For Windows users
+Download `TallyLite-Setup-1.0.0.exe` from GitHub Releases and run it. It installs TallyLite for the current Windows user and creates a Start menu shortcut. Python and Inno Setup are not required by end users.
 
-## Privacy and data storage
-TallyLite is designed to work offline. Accounting data is stored locally on the Windows computer in:
-
-`%LOCALAPPDATA%\TallyLite\`
-
-The reviewed source contains no obvious network/API upload calls. This is not a formal security audit. Do not share your database, backups, or exports publicly.
-
-## Windows download (for regular users)
-Download `TallyLite-Windows.zip` from the project's GitHub **Releases** page, extract the ZIP, open the `TallyLite` folder, and double-click `TallyLite.exe`. Python is not required for users of this packaged build.
-
-## Build from source (for developers)
-1. Install Python 3.10 or newer on Windows.
+## Build the installer (maintainers)
+1. On a Windows build PC, install Python 3.10+ and Inno Setup 6.
 2. Double-click `build_windows.bat`.
-3. When it finishes, find `TallyLite-Windows.zip` in this folder. This contains the app and runtime files.
+3. The installer is created at `Output\TallyLite-Setup-1.0.0.exe`.
+4. Test it on a clean Windows PC before publishing.
 
-## Developer run
+Inno Setup: https://jrsoftware.org/isdl.php
+
+## Privacy
+TallyLite stores accounting data locally in `%LOCALAPPDATA%\TallyLite\`. Program files install separately in `%LOCALAPPDATA%\Programs\TallyLite\`. The installer does not bundle a developer's personal database, books, backups, or exports. Uninstalling the app does not intentionally delete accounting data.
+
+The app is intended to work offline. Source-code review is not a formal security audit. Do not publish databases, backups, exports, credentials, or signing keys.
+
+## Build from source
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\activate
