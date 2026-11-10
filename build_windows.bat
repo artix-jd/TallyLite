@@ -19,11 +19,7 @@ python -m pip install --upgrade pip
 if errorlevel 1 goto failed
 python -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 goto failed
-if exist "ac_logo.ico" (
-  pyinstaller --noconfirm --clean --windowed --name TallyLite --icon "ac_logo.ico" --add-data "ac_logo.ico;." --add-data "README.md;." --add-data "CHANGELOG.md;." --collect-all customtkinter app.py
-) else (
-  pyinstaller --noconfirm --clean --windowed --name TallyLite --add-data "README.md;." --add-data "CHANGELOG.md;." --collect-all customtkinter app.py
-)
+pyinstaller --noconfirm --clean --windowed --name TallyLite --icon "ac_logo.ico" --collect-all customtkinter app.py
 if errorlevel 1 goto failed
 set "ISCC="
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
@@ -36,11 +32,11 @@ if not defined ISCC (
 "%ISCC%" "TallyLite-Setup.iss"
 if errorlevel 1 goto failed
 echo.
-echo BUILD COMPLETE: Output\TallyLite-Setup-1.0.0.exe
-echo Upload that Setup.exe to GitHub Releases.
+echo BUILD COMPLETE: Output\TallyLite-Setup-1.0.1.exe
+echo Test the installer on a separate Windows PC before publishing.
 pause
 exit /b 0
 :failed
-echo BUILD FAILED. Share a screenshot of this window.
+echo BUILD FAILED. Take a screenshot of this window and share it.
 pause
 exit /b 1

@@ -1,7 +1,5 @@
-import os
+﻿import os
 import re
-import ast
-import math
 import sys
 import csv
 import json
@@ -10,6 +8,7 @@ import shutil
 import sqlite3
 import calendar
 import webbrowser
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -23,29 +22,43 @@ except ImportError:
 
 if sys.platform == "win32":
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TallyLite.Desktop")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArtixJD.TallyLite.V66")
     except Exception:
         pass
 
 ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
 
-# Resource files (icon/docs) are read from the app bundle or source folder.
-if getattr(sys, "frozen", False):
-    RESOURCE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+# Application resources stay beside the installed executable.
+# User accounting data is kept separately in the current Windows user's LocalAppData.
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TallyLite")
 else:
-    RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = BASE_DIR
 
-# User data belongs in a writable per-user location, never beside the EXE.
-LOCAL_APP_DATA = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-DATA_DIR = os.path.join(LOCAL_APP_DATA, "TallyLite")
 BOOKS_DIR = os.path.join(DATA_DIR, "books")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 EXPORT_DIR = os.path.join(DATA_DIR, "exports")
-README_PATH = os.path.join(RESOURCE_DIR, "README.md")
-CHANGELOG_PATH = os.path.join(RESOURCE_DIR, "CHANGELOG.md")
-ICON_PATH = os.path.join(RESOURCE_DIR, "ac_logo.ico")
+README_PATH = os.path.join(BASE_DIR, "README.md")
+CHANGELOG_PATH = os.path.join(BASE_DIR, "CHANGELOG.md")
+ICON_PATH = os.path.join(BASE_DIR, "ac_logo.ico")
 REGISTRY_JSON = os.path.join(BOOKS_DIR, "books_registry.json")
+
+# One-time, non-destructive migration for data created by older installed versions,
+# which stored these folders beside the executable. Copy only when the new destination
+# does not exist; never overwrite or delete the old data.
+if getattr(sys, 'frozen', False):
+    for _folder_name in ("books", "backups", "exports"):
+        _legacy_folder = os.path.join(BASE_DIR, _folder_name)
+        _new_folder = os.path.join(DATA_DIR, _folder_name)
+        if os.path.isdir(_legacy_folder) and not os.path.exists(_new_folder):
+            try:
+                os.makedirs(DATA_DIR, exist_ok=True)
+                shutil.copytree(_legacy_folder, _new_folder)
+            except Exception:
+                pass
 
 os.makedirs(BOOKS_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -89,39 +102,6 @@ ANALYTICS_PERIODS = [
 ]
 
 
-
-def safe_numeric_eval(expression: str) -> float:
-    """Evaluate simple arithmetic only; never execute Python code from an input field."""
-    node = ast.parse(str(expression).strip(), mode="eval")
-
-    def visit(n):
-        if isinstance(n, ast.Expression):
-            return visit(n.body)
-        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
-            return float(n.value)
-        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.UAdd, ast.USub)):
-            value = visit(n.operand)
-            return value if isinstance(n.op, ast.UAdd) else -value
-        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
-            left, right = visit(n.left), visit(n.right)
-            if isinstance(n.op, ast.Add): result = left + right
-            elif isinstance(n.op, ast.Sub): result = left - right
-            elif isinstance(n.op, ast.Mult): result = left * right
-            elif isinstance(n.op, ast.Div): result = left / right
-            elif isinstance(n.op, ast.FloorDiv): result = left // right
-            elif isinstance(n.op, ast.Mod): result = left % right
-            else:
-                if abs(right) > 10 or abs(left) > 1e12:
-                    raise ValueError("Exponent or value too large")
-                result = left ** right
-            if not math.isfinite(result) or abs(result) > 1e15:
-                raise ValueError("Result out of range")
-            return result
-        raise ValueError("Only basic arithmetic is allowed")
-
-    return float(visit(node))
-
-
 def sanitize_narration(text: str) -> str:
     if not text:
         return ""
@@ -144,7 +124,7 @@ def generate_ac_icon(ico_path: str):
             font = ImageFont.truetype("arialbd.ttf", 44)
         except Exception:
             font = ImageFont.load_default()
-        draw.text((22, 26), "A/C", fill=(255, 255, 255, 255), font=font)
+        draw.text((26, 26), "TL", fill=(255, 255, 255, 255), font=font)
         img.save(ico_path, format="ICO", sizes=[(64, 64), (32, 32), (16, 16)])
     except Exception:
         pass
@@ -185,7 +165,7 @@ def resolve_period_dates(period_label: str, custom_from: str = "", custom_to: st
     return None, None
 
 
-class BookDatabaseV652a:
+class BookDatabaseV66:
     def __init__(self):
         self.conn = None
         self.cursor = None
@@ -218,7 +198,7 @@ class BookDatabaseV652a:
         self.registry["books"] = valid_books
 
         if not self.registry["books"]:
-            self.create_or_switch_company("My First Book", "FY 2026-27")
+            self.create_or_switch_company("Jd x 2026", "FY 2026-27")
         else:
             act_name = self.registry.get("active_book", "")
             found = next((b for b in self.registry["books"] if b["name"].lower() == act_name.lower()), self.registry["books"][0])
@@ -339,6 +319,354 @@ class BookDatabaseV652a:
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_cr_ledger ON transactions(cr_ledger COLLATE NOCASE)")
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_vch_grp ON transactions(voucher_group_id)")
         self.conn.commit()
+
+    def auto_backup_active_book(self, tag: str = "auto") -> str:
+        if not self.active_db_path or not os.path.exists(self.active_db_path):
+            return ""
+        if self.conn:
+            try:
+                self.conn.commit()
+            except Exception:
+                pass
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_b = self._safe_filename(self.active_book_name)[:-3]
+        dest = os.path.join(BACKUP_DIR, f"book_{safe_b}_{tag}_{ts}.db")
+        shutil.copy2(self.active_db_path, dest)
+        return dest
+
+    def _infer_group_for_ledger(self, ledger_name: str, role: str = "category", tx_type: str = "Expense") -> str:
+        low = (ledger_name or "").lower()
+        if any(k in low for k in ("bank", "hdfc", "icici", "sbi", "axis", "union", "kotak", "bob", "upi", "gpay", "phonepe", "paytm")):
+            return "Bank Account"
+        if "cash" in low or "wallet" in low:
+            return "Cash in Hand"
+        if role == "account":
+            return "Bank Account"
+        if tx_type == "Income":
+            return "Income"
+        return "Expense"
+
+    def _normalize_date_str(self, raw_dt: str) -> str:
+        s = (raw_dt or "").strip()
+        if not s:
+            return datetime.now().strftime("%Y-%m-%d")
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%Y%m%d", "%d.%m.%Y"):
+            try:
+                return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def import_transactions_from_csv(self, csv_path: str, skip_duplicates: bool = True):
+        backup_path = self.auto_backup_active_book("pre_csv_tx_import")
+        imported_tx = 0
+        skipped_tx = 0
+        created_ledgers = 0
+        group_id_remap = {}
+
+        with open(csv_path, "r", encoding="utf-8-sig", errors="replace") as f:
+            reader = csv.reader(f)
+            rows = [r for r in reader if any(c.strip() for c in r)]
+
+        if not rows:
+            return 0, 0, 0, backup_path
+
+        header = [c.strip().lower() for c in rows[0]]
+        start_idx = 1
+
+        if len(header) >= 2 and header[0] == "ledger name" and len(rows) >= 3:
+            stmt_ledger = self.clean_name(rows[0][1])
+            stmt_group = rows[0][3].strip() if len(rows[0]) > 3 else "Expense"
+            if not self.ledger_exists(stmt_ledger):
+                self.save_ledger(stmt_ledger, stmt_group, 0.0)
+                created_ledgers += 1
+            header = [c.strip().lower() for c in rows[2]]
+            data_rows = rows[3:]
+            is_statement_csv = True
+        else:
+            data_rows = rows[start_idx:]
+            is_statement_csv = False
+
+        def col_idx(names, default=-1):
+            for n in names:
+                if n in header:
+                    return header.index(n)
+            return default
+
+        if is_statement_csv:
+            for r in data_rows:
+                if len(r) < 7:
+                    continue
+                dt = self._normalize_date_str(r[1])
+                t_type = r[2].strip().capitalize()
+                if t_type not in ("Expense", "Income", "Transfer"):
+                    t_type = "Expense"
+                particulars = re.sub(r"\s*\[Split #\d+\]", "", r[3].strip()) or "General"
+                desc = sanitize_narration(r[4])
+                dr_val = float(re.sub(r"[^0-9.-]", "", r[5]) or 0.0) if r[5].strip() not in ("-", "") else 0.0
+                cr_val = float(re.sub(r"[^0-9.-]", "", r[6]) or 0.0) if r[6].strip() not in ("-", "") else 0.0
+                amt = dr_val if dr_val > 0 else cr_val
+                if amt <= 0:
+                    continue
+                if not self.ledger_exists(particulars):
+                    self.save_ledger(particulars, self._infer_group_for_ledger(particulars, "category", t_type), 0.0)
+                    created_ledgers += 1
+                if t_type == "Expense":
+                    cat, acc, to_acc = (stmt_ledger, particulars, "") if dr_val > 0 else (particulars, stmt_ledger, "")
+                elif t_type == "Income":
+                    cat, acc, to_acc = (particulars, stmt_ledger, "") if dr_val > 0 else (stmt_ledger, particulars, "")
+                else:
+                    cat, acc, to_acc = ("Contra Transfer", particulars if dr_val > 0 else stmt_ledger, stmt_ledger if dr_val > 0 else particulars)
+
+                if skip_duplicates:
+                    self.cursor.execute(
+                        "SELECT 1 FROM transactions WHERE tx_date=? AND tx_type=? AND category=? COLLATE NOCASE AND account=? COLLATE NOCASE AND ABS(amount - ?) < 0.01 AND description=?",
+                        (dt, t_type, cat, acc, amt, desc)
+                    )
+                    if self.cursor.fetchone():
+                        skipped_tx += 1
+                        continue
+                self.add_transaction(dt, t_type, cat, acc, to_acc, desc, amt, 0)
+                imported_tx += 1
+            return imported_tx, skipped_tx, created_ledgers, backup_path
+
+        idx_dt = col_idx(["date", "tx_date", "voucher date"], 1)
+        idx_type = col_idx(["type", "tx_type", "voucher type"], 2)
+        idx_cat = col_idx(["category", "category / ledger", "ledger", "particulars"], 3)
+        idx_acc = col_idx(["payment_mode", "account", "paid from / mode", "paid from", "mode"], 4)
+        idx_to = col_idx(["transfer_to", "to_account", "transfer to"], 5)
+        idx_desc = col_idx(["description", "narration", "note", "notes"], 6)
+        idx_amt = col_idx(["amount", "amt", "value"], 7)
+        idx_grp = col_idx(["group_id", "voucher_group_id", "split_group"], 10)
+
+        for r in data_rows:
+            if len(r) <= max(idx_dt, idx_type, idx_cat, idx_acc):
+                continue
+            dt = self._normalize_date_str(r[idx_dt] if idx_dt < len(r) else "")
+            t_type = (r[idx_type].strip().capitalize() if idx_type < len(r) else "Expense")
+            if "Expense" in t_type or "Payment" in t_type:
+                t_type = "Expense"
+            elif "Income" in t_type or "Receipt" in t_type:
+                t_type = "Income"
+            elif "Transfer" in t_type or "Contra" in t_type:
+                t_type = "Transfer"
+            else:
+                t_type = "Expense"
+
+            cat = self.clean_name(r[idx_cat]) if (0 <= idx_cat < len(r) and r[idx_cat].strip()) else ("Contra Transfer" if t_type == "Transfer" else "Miscellaneous")
+            acc = self.clean_name(r[idx_acc]) if (0 <= idx_acc < len(r) and r[idx_acc].strip()) else "Cash"
+            to_acc = self.clean_name(r[idx_to]) if (0 <= idx_to < len(r) and r[idx_to].strip()) else ""
+            desc = sanitize_narration(r[idx_desc]) if (0 <= idx_desc < len(r)) else ""
+
+            raw_amt = r[idx_amt].strip() if (0 <= idx_amt < len(r)) else "0"
+            try:
+                amt = abs(float(re.sub(r"[^0-9.-]", "", raw_amt) or 0.0))
+            except Exception:
+                amt = 0.0
+            if amt <= 0:
+                continue
+
+            raw_grp = 0
+            if 0 <= idx_grp < len(r):
+                try:
+                    raw_grp = int(float(r[idx_grp].strip() or 0))
+                except Exception:
+                    raw_grp = 0
+
+            if not self.ledger_exists(acc):
+                self.save_ledger(acc, self._infer_group_for_ledger(acc, "account", t_type), 0.0)
+                created_ledgers += 1
+            if t_type != "Transfer" and cat != "Contra Transfer" and not self.ledger_exists(cat):
+                self.save_ledger(cat, self._infer_group_for_ledger(cat, "category", t_type), 0.0)
+                created_ledgers += 1
+            if t_type == "Transfer":
+                if not to_acc:
+                    to_acc = "Cash" if acc.lower() != "cash" else "Bank"
+                if not self.ledger_exists(to_acc):
+                    self.save_ledger(to_acc, self._infer_group_for_ledger(to_acc, "account", t_type), 0.0)
+                    created_ledgers += 1
+
+            acc_c = self.get_canonical_name(acc)
+            cat_c = "Contra Transfer" if t_type == "Transfer" else self.get_canonical_name(cat)
+            to_c = self.get_canonical_name(to_acc) if t_type == "Transfer" else ""
+
+            if skip_duplicates:
+                self.cursor.execute(
+                    "SELECT 1 FROM transactions WHERE tx_date=? AND tx_type=? AND category=? COLLATE NOCASE AND account=? COLLATE NOCASE AND to_account=? COLLATE NOCASE AND ABS(amount - ?) < 0.01 AND description=?",
+                    (dt, t_type, cat_c, acc_c, to_c, amt, desc)
+                )
+                if self.cursor.fetchone():
+                    skipped_tx += 1
+                    continue
+
+            mapped_grp = 0
+            if raw_grp > 0:
+                if raw_grp not in group_id_remap:
+                    group_id_remap[raw_grp] = self._next_voucher_group_id()
+                mapped_grp = group_id_remap[raw_grp]
+
+            self.add_transaction(dt, t_type, cat_c, acc_c, to_c, desc, amt, mapped_grp)
+            imported_tx += 1
+
+        return imported_tx, skipped_tx, created_ledgers, backup_path
+
+    def import_ledgers_from_csv(self, csv_path: str):
+        backup_path = self.auto_backup_active_book("pre_csv_ledgers_import")
+        imported_count = 0
+        with open(csv_path, "r", encoding="utf-8-sig", errors="replace") as f:
+            reader = csv.reader(f)
+            rows = [r for r in reader if any(c.strip() for c in r)]
+        if not rows:
+            return 0, backup_path
+
+        header = [c.strip().lower() for c in rows[0]]
+        has_header = any(k in header for k in ("name", "ledger", "ledger name", "group", "ledger_group", "account type"))
+        data_rows = rows[1:] if has_header else rows
+
+        for r in data_rows:
+            if not r or not r[0].strip():
+                continue
+            name = r[0].strip()
+            grp = r[1].strip() if len(r) > 1 and r[1].strip() else "Expense"
+            op_bal = 0.0
+            if len(r) > 2 and r[2].strip():
+                try:
+                    op_bal = float(re.sub(r"[^0-9.-]", "", r[2].strip()) or 0.0)
+                except Exception:
+                    op_bal = 0.0
+            pin = None
+            if len(r) > 3 and r[3].strip() in ("0", "1"):
+                pin = int(r[3].strip())
+            notes = r[4].strip() if len(r) > 4 else ""
+            self.save_ledger(name, grp, op_bal, pin, notes)
+            imported_count += 1
+        return imported_count, backup_path
+
+    def import_tally_xml_file(self, xml_path: str, skip_duplicates: bool = True):
+        backup_path = self.auto_backup_active_book("pre_xml_import")
+        imported_tx = 0
+        skipped_tx = 0
+        created_ledgers = 0
+
+        with open(xml_path, "r", encoding="utf-8", errors="replace") as f:
+            xml_text = f.read()
+
+        root = ET.fromstring(xml_text)
+        vouchers = root.findall(".//VOUCHER")
+
+        for vch in vouchers:
+            v_type_raw = (vch.get("VCHTYPE") or vch.findtext("VOUCHERTYPENAME") or "Payment").strip().lower()
+            dt_raw = (vch.findtext("DATE") or "").strip()
+            dt = self._normalize_date_str(dt_raw)
+            desc = sanitize_narration(vch.findtext("NARRATION") or "")
+
+            if "contra" in v_type_raw or "transfer" in v_type_raw:
+                t_type = "Transfer"
+            elif "receipt" in v_type_raw or "income" in v_type_raw or "sales" in v_type_raw:
+                t_type = "Income"
+            else:
+                t_type = "Expense"
+
+            dr_entries = []
+            cr_entries = []
+            for entry in vch.findall(".//ALLLEDGERENTRIES.LIST"):
+                l_name = self.clean_name(entry.findtext("LEDGERNAME") or "")
+                amt_raw = (entry.findtext("AMOUNT") or "0").strip()
+                deemed = (entry.findtext("ISDEEMEDPOSITIVE") or "").strip().lower()
+                try:
+                    amt_val = float(re.sub(r"[^0-9.-]", "", amt_raw) or 0.0)
+                except Exception:
+                    amt_val = 0.0
+                if not l_name or abs(amt_val) < 0.005:
+                    continue
+                if deemed == "yes" or amt_val < 0:
+                    dr_entries.append((l_name, abs(amt_val)))
+                else:
+                    cr_entries.append((l_name, abs(amt_val)))
+
+            if not dr_entries or not cr_entries:
+                continue
+
+            dr_ledger, dr_amt = dr_entries[0]
+            cr_ledger, cr_amt = cr_entries[0]
+            amt = max(dr_amt, cr_amt)
+
+            if t_type == "Expense":
+                cat, acc, to_acc = dr_ledger, cr_ledger, ""
+            elif t_type == "Income":
+                cat, acc, to_acc = cr_ledger, dr_ledger, ""
+            else:
+                cat, acc, to_acc = "Contra Transfer", cr_ledger, dr_ledger
+
+            if not self.ledger_exists(acc):
+                self.save_ledger(acc, self._infer_group_for_ledger(acc, "account", t_type), 0.0)
+                created_ledgers += 1
+            if t_type != "Transfer" and not self.ledger_exists(cat):
+                self.save_ledger(cat, self._infer_group_for_ledger(cat, "category", t_type), 0.0)
+                created_ledgers += 1
+            if t_type == "Transfer" and not self.ledger_exists(to_acc):
+                self.save_ledger(to_acc, self._infer_group_for_ledger(to_acc, "account", t_type), 0.0)
+                created_ledgers += 1
+
+            acc_c = self.get_canonical_name(acc)
+            cat_c = "Contra Transfer" if t_type == "Transfer" else self.get_canonical_name(cat)
+            to_c = self.get_canonical_name(to_acc) if t_type == "Transfer" else ""
+
+            if skip_duplicates:
+                self.cursor.execute(
+                    "SELECT 1 FROM transactions WHERE tx_date=? AND tx_type=? AND category=? COLLATE NOCASE AND account=? COLLATE NOCASE AND ABS(amount - ?) < 0.01 AND description=?",
+                    (dt, t_type, cat_c, acc_c, amt, desc)
+                )
+                if self.cursor.fetchone():
+                    skipped_tx += 1
+                    continue
+
+            self.add_transaction(dt, t_type, cat_c, acc_c, to_c, desc, amt, 0)
+            imported_tx += 1
+
+        return imported_tx, skipped_tx, created_ledgers, backup_path
+
+    def import_external_db_book(self, source_db_path: str, mode: str = "new", new_book_name: str = ""):
+        if not os.path.exists(source_db_path):
+            return False, "Selected database file does not exist.", ""
+
+        try:
+            chk_conn = sqlite3.connect(source_db_path)
+            cur = chk_conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {r[0].lower() for r in cur.fetchall()}
+            chk_conn.close()
+            if "ledgers" not in tables and "transactions" not in tables:
+                return False, "Selected .db file is not a valid TallyLite Book database.", ""
+        except Exception as e:
+            return False, f"Invalid SQLite database file: {e}", ""
+
+        if mode == "overwrite":
+            backup_path = self.auto_backup_active_book("pre_db_overwrite")
+            if self.conn:
+                self.conn.close()
+                self.conn = None
+            shutil.copy2(source_db_path, self.active_db_path)
+            self.open_book_file(self.active_book_name, self.active_fy)
+            return True, f"Restored database into active Book '{self.active_book_name}'.", backup_path
+        else:
+            b_name = new_book_name.strip() or os.path.splitext(os.path.basename(source_db_path))[0]
+            base_name = b_name
+            counter = 1
+            while any(b["name"].lower() == b_name.lower() for b in self.registry.get("books", [])):
+                b_name = f"{base_name} ({counter})"
+                counter += 1
+            fname = self._safe_filename(b_name)
+            f_cnt = 1
+            while os.path.exists(os.path.join(BOOKS_DIR, fname)):
+                fname = f"{self._safe_filename(b_name)[:-3]}_{f_cnt}.db"
+                f_cnt += 1
+            dest_path = os.path.join(BOOKS_DIR, fname)
+            shutil.copy2(source_db_path, dest_path)
+            self.registry["books"].append({"name": b_name, "file": fname, "fy": self.active_fy})
+            self._save_registry()
+            self.open_book_file(b_name, self.active_fy)
+            return True, f"Imported and opened new Book '{b_name}'.", dest_path
 
     def get_active_company(self):
         return {"id": 1, "name": self.active_book_name, "fy": self.active_fy, "db_path": self.active_db_path}
@@ -1185,12 +1513,12 @@ class CalendarPopup(ctk.CTkToplevel):
 
 
 class CreateLedgerModal(ctk.CTkToplevel):
-    def __init__(self, parent, db: BookDatabaseV652a, prefill_name="", default_group="Expense", on_success=None):
+    def __init__(self, parent, db: BookDatabaseV66, prefill_name="", default_group="Expense", on_success=None):
         super().__init__(parent)
         self.parent_app = parent
         self.db = db
         self.on_success = on_success
-        self.title("Create / Edit Ledger Account (ESC to Close)")
+        self.title("TallyLite — Create / Edit Ledger Account (ESC to Close)")
         self.geometry("520x510")
         self.minsize(500, 490)
         self.resizable(False, False)
@@ -1285,7 +1613,7 @@ class CreateLedgerModal(ctk.CTkToplevel):
             messagebox.showwarning("Missing Name", "Please enter a valid Ledger Name.", parent=self)
             return
         try:
-            op = safe_numeric_eval(self.ent_op.get().strip() or "0")
+            op = float(eval(self.ent_op.get().strip() or "0", {"__builtins__": None}, {}))
         except Exception:
             messagebox.showerror("Invalid Amount", "Opening Balance must be a valid number.", parent=self)
             return
@@ -1324,9 +1652,187 @@ class DocumentViewerModal(ctk.CTkToplevel):
 
 
 # ==============================================================================
-# MAIN V6.5.2a APPLICATION (PHASE 2 HOTFIX: LOCKED PREVIEW + UNLOCK TO EDIT + ZERO FOCUS STEALING + TALLY ESC)
+# MAIN TALLYLITE V6.6 APPLICATION
+# (FULL-HEIGHT LEFT VOUCHER SIDEBAR + SIDEBAR TOGGLE + GATEWAY OF TALLY PANEL)
 # ==============================================================================
-class OfflineAccountingProV652a(ctk.CTk):
+
+class ImportDataModal(ctk.CTkToplevel):
+    def __init__(self, parent, db: BookDatabaseV66, on_complete=None):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.db = db
+        self.on_complete = on_complete
+        self.title("📥 Universal Import & Restore Hub (ESC to Close)")
+        self.geometry("620x560")
+        self.resizable(False, False)
+        self.bind("<Escape>", lambda e: self.close_modal())
+        self.protocol("WM_DELETE_WINDOW", self.close_modal)
+        self.lift()
+        self.focus_force()
+
+        self.grid_columnconfigure(0, weight=1)
+
+        hdr = ctk.CTkFrame(self, corner_radius=10, fg_color="#0F172A")
+        hdr.grid(row=0, column=0, padx=18, pady=(16, 8), sticky="ew")
+        ctk.CTkLabel(hdr, text="📥 TALLYLITE UNIVERSAL IMPORT & RESTORE HUB", font=ctk.CTkFont(size=16, weight="bold"), text_color="#FFFFFF").pack(anchor="w", padx=16, pady=(10, 2))
+        ctk.CTkLabel(
+            hdr,
+            text=f"Active Book: {self.db.active_book_name}  •  Safety auto-backup is created in /backups before every import!",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color="#38BDF8"
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        self.var_skip_dups = tk.IntVar(value=1)
+        chk = ctk.CTkCheckBox(
+            self,
+            text="Skip duplicate transactions automatically (Matches Date + Ledger + Account + Amount + Note)",
+            variable=self.var_skip_dups,
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        chk.grid(row=1, column=0, padx=22, pady=(4, 6), sticky="w")
+
+        cards = ctk.CTkFrame(self, corner_radius=10)
+        cards.grid(row=2, column=0, padx=18, pady=6, sticky="nsew")
+        cards.grid_columnconfigure(0, weight=1)
+
+        def make_option(row_idx, title, desc, btn_text, btn_color, cmd):
+            f = ctk.CTkFrame(cards, corner_radius=8, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color="#CBD5E1")
+            f.grid(row=row_idx, column=0, padx=12, pady=6, sticky="ew")
+            f.grid_columnconfigure(0, weight=1)
+            txt_f = ctk.CTkFrame(f, fg_color="transparent")
+            txt_f.grid(row=0, column=0, padx=12, pady=8, sticky="ew")
+            ctk.CTkLabel(txt_f, text=title, font=ctk.CTkFont(size=13, weight="bold"), anchor="w").pack(fill="x")
+            ctk.CTkLabel(txt_f, text=desc, font=ctk.CTkFont(size=11), text_color="#475569", anchor="w", justify="left", wraplength=380).pack(fill="x", pady=(2, 0))
+            ctk.CTkButton(f, text=btn_text, width=165, height=34, fg_color=btn_color, font=ctk.CTkFont(size=12, weight="bold"), command=cmd).grid(row=0, column=1, padx=12, pady=8)
+
+        make_option(
+            0,
+            "1. 📊 Import Transactions CSV (.csv)",
+            "Imports TallyLite Daybook CSVs, Single-Ledger Statement CSVs, or custom Excel CSVs. Auto-creates missing ledgers & preserves Split groups.",
+            "📂 Select CSV File...",
+            "#059669",
+            self.run_csv_tx_import
+        )
+
+        make_option(
+            1,
+            "2. 📒 Import Ledgers Master CSV (.csv)",
+            "Imports a Chart of Accounts CSV (Ledger Name, Account Group, Opening Balance, Pin) into the current Book.",
+            "📂 Select Ledgers CSV...",
+            "#2563EB",
+            self.run_csv_ledgers_import
+        )
+
+        make_option(
+            2,
+            "3. 🏛 Import Tally XML Vouchers (.xml)",
+            "Imports TallyLite or Tally ERP / Prime XML voucher files (<TALLYMESSAGE><VOUCHER>) with Dr/Cr double-entry mapping.",
+            "📂 Select XML File...",
+            "#7C3AED",
+            self.run_xml_import
+        )
+
+        make_option(
+            3,
+            "4. 🗄 Import / Restore Book Database (.db)",
+            "Import a backed-up .db file either as a brand-new separate Book OR restore/overwrite the current active Book.",
+            "📂 Select .db Backup...",
+            "#D97706",
+            self.run_db_import
+        )
+
+        btm = ctk.CTkFrame(self, fg_color="transparent")
+        btm.grid(row=3, column=0, padx=18, pady=(8, 14), sticky="ew")
+        ctk.CTkButton(btm, text="📂 Open Backups Folder", width=160, height=32, fg_color="#475569", command=lambda: os.startfile(BACKUP_DIR)).pack(side="left")
+        ctk.CTkButton(btm, text="Close (ESC)", width=110, height=32, fg_color="#64748B", command=self.close_modal).pack(side="right")
+
+    def close_modal(self):
+        self.parent_app.active_modal = None
+        self.destroy()
+
+    def run_csv_tx_import(self):
+        path = filedialog.askopenfilename(parent=self, title="Select Transactions CSV to Import", initialdir=EXPORT_DIR, filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")])
+        if not path:
+            return
+        try:
+            imp, skp, new_l, bkp = self.db.import_transactions_from_csv(path, skip_duplicates=bool(self.var_skip_dups.get()))
+            if self.on_complete:
+                self.on_complete()
+            messagebox.showinfo(
+                "CSV Import Complete",
+                f"✔ Imported Transactions: {imp}\n"
+                f"⏭ Skipped Duplicates: {skp}\n"
+                f"➕ New Ledgers Auto-Created: {new_l}\n\n"
+                f"🛡 Pre-Import Safety Backup saved to:\n{bkp}",
+                parent=self
+            )
+            self.close_modal()
+        except Exception as e:
+            messagebox.showerror("CSV Import Error", f"Could not import CSV:\n{e}", parent=self)
+
+    def run_csv_ledgers_import(self):
+        path = filedialog.askopenfilename(parent=self, title="Select Ledgers Master CSV to Import", initialdir=EXPORT_DIR, filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")])
+        if not path:
+            return
+        try:
+            cnt, bkp = self.db.import_ledgers_from_csv(path)
+            if self.on_complete:
+                self.on_complete()
+            messagebox.showinfo(
+                "Ledgers Import Complete",
+                f"✔ Imported / Updated Ledgers: {cnt}\n\n"
+                f"🛡 Pre-Import Safety Backup saved to:\n{bkp}",
+                parent=self
+            )
+            self.close_modal()
+        except Exception as e:
+            messagebox.showerror("Ledgers CSV Error", f"Could not import Ledgers CSV:\n{e}", parent=self)
+
+    def run_xml_import(self):
+        path = filedialog.askopenfilename(parent=self, title="Select Tally XML File to Import", initialdir=EXPORT_DIR, filetypes=[("XML Files", "*.xml"), ("All Files", "*.*")])
+        if not path:
+            return
+        try:
+            imp, skp, new_l, bkp = self.db.import_tally_xml_file(path, skip_duplicates=bool(self.var_skip_dups.get()))
+            if self.on_complete:
+                self.on_complete()
+            messagebox.showinfo(
+                "Tally XML Import Complete",
+                f"✔ Imported XML Vouchers: {imp}\n"
+                f"⏭ Skipped Duplicates: {skp}\n"
+                f"➕ New Ledgers Auto-Created: {new_l}\n\n"
+                f"🛡 Pre-Import Safety Backup saved to:\n{bkp}",
+                parent=self
+            )
+            self.close_modal()
+        except Exception as e:
+            messagebox.showerror("XML Import Error", f"Could not import XML file:\n{e}", parent=self)
+
+    def run_db_import(self):
+        path = filedialog.askopenfilename(parent=self, title="Select TallyLite .db Backup File", initialdir=BACKUP_DIR, filetypes=[("SQLite Book DB", "*.db"), ("All Files", "*.*")])
+        if not path:
+            return
+        ans = messagebox.askyesnocancel(
+            "Choose .db Import Mode",
+            "How would you like to import this .db Book file?\n\n"
+            "• Click YES to import as a NEW separate Book (Recommended)\n"
+            "• Click NO to OVERWRITE / RESTORE into current active Book (Auto-backs up current Book first)\n"
+            "• Click CANCEL to abort",
+            parent=self
+        )
+        if ans is None:
+            return
+        mode = "new" if ans else "overwrite"
+        ok, msg, bkp = self.db.import_external_db_book(path, mode=mode)
+        if ok:
+            if self.on_complete:
+                self.on_complete()
+            messagebox.showinfo("Database Import Complete", f"✔ {msg}\n\n🛡 Safety path:\n{bkp}", parent=self)
+            self.close_modal()
+        else:
+            messagebox.showerror("Database Import Failed", msg, parent=self)
+
+
+class TallyLiteAppV66(ctk.CTk):
     def __init__(self):
         super().__init__()
         generate_ac_icon(ICON_PATH)
@@ -1336,10 +1842,10 @@ class OfflineAccountingProV652a(ctk.CTk):
             except Exception:
                 pass
 
-        self.db = BookDatabaseV652a()
+        self.db = BookDatabaseV66()
         self.selected_tx_id = None
         self.selected_voucher_group_id = 0
-        self.voucher_locked_preview = False  # True when viewing an existing transaction before clicking Unlock
+        self.voucher_locked_preview = False
         self.is_split_mode = False
         self.split_target = "category"
         self.split_row_widgets = []
@@ -1347,6 +1853,7 @@ class OfflineAccountingProV652a(ctk.CTk):
 
         self.active_drill_ledger = None
         self.calc_visible = False
+        self.voucher_sidebar_visible = True
         self.book_is_open = False
         self.active_modal = None
         self.gateway_selected_idx = 0
@@ -1356,7 +1863,7 @@ class OfflineAccountingProV652a(ctk.CTk):
 
         comp = self.db.get_active_company()
         self.current_period = comp["fy"]
-        self.title("TallyLite — Select or Create Book")
+        self.title("TallyLite V6.6 — Select or Create Book")
         self.geometry("1450x910")
         self.minsize(1220, 760)
 
@@ -1399,7 +1906,6 @@ class OfflineAccountingProV652a(ctk.CTk):
     def has_unsaved_voucher_draft(self) -> bool:
         if not self.book_is_open:
             return False
-        # If just viewing a locked preview, it is NOT an unsaved draft!
         if self.voucher_locked_preview:
             return False
         if self.selected_tx_id is not None or self.selected_voucher_group_id > 0:
@@ -1501,7 +2007,7 @@ class OfflineAccountingProV652a(ctk.CTk):
                 )
             m.add_separator()
             m.add_command(label="📂 Open Books Database Folder", command=lambda: os.startfile(BOOKS_DIR))
-            m.add_command(label="❌ Exit Application", command=self.quit)
+            m.add_command(label="❌ Exit TallyLite", command=self.quit)
 
         def build_ledgers_menu(m):
             state_flag = "normal" if self.book_is_open else "disabled"
@@ -1511,6 +2017,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         def build_vouchers_menu(m):
             state_flag = "normal" if self.book_is_open else "disabled"
             m.add_command(label="🎯 New Entry / Jump to Voucher Box (Alt+V)", state=state_flag, command=self.focus_voucher_entry)
+            m.add_command(label="◧ Show / Hide Left Voucher Sidebar (Ctrl+B)", state=state_flag, command=self.toggle_voucher_sidebar)
             m.add_command(label="🔓 Unlock Selected Entry for Editing (Alt+E)", state=state_flag, command=self.unlock_voucher_for_editing)
             m.add_command(label="➕ Toggle Multi-Line Split Voucher Mode (Alt+S)", state=state_flag, command=self.toggle_split_voucher_mode)
             m.add_separator()
@@ -1524,16 +2031,23 @@ class OfflineAccountingProV652a(ctk.CTk):
             m.add_command(label="📒 All Transactions / Daybook (Alt+2)", state=state_flag, command=lambda: self.switch_main_tab("daybook"))
             m.add_command(label="⚙️ Manage Ledgers (Alt+3)", state=state_flag, command=lambda: self.switch_main_tab("ledgers"))
             m.add_command(label="📈 Financial Reports: TB, P&L, B/S (Alt+4)", state=state_flag, command=lambda: self.switch_main_tab("reports"))
+            m.add_separator()
+            m.add_command(label="◧ Toggle Left Voucher Sidebar (Ctrl+B)", state=state_flag, command=self.toggle_voucher_sidebar)
 
         def build_export_menu(m):
             state_flag = "normal" if self.book_is_open else "disabled"
+            m.add_command(label="📥 Import Data / Restore Backup (Ctrl+I)", state=state_flag, command=self.open_import_modal)
+            m.add_separator()
             m.add_command(label="📊 Export All Transactions to CSV", state=state_flag, command=self.export_daybook_csv)
+            m.add_command(label="📒 Export Ledgers Master to CSV", state=state_flag, command=self.export_ledgers_master_csv)
             m.add_command(label="🖨 Print / Save Financial Statements (PDF/HTML)", state=state_flag, command=self.export_financial_statements_html_pdf)
             m.add_command(label="🏛 Export Tally XML File (.xml)", state=state_flag, command=self.export_tally_xml)
+            m.add_separator()
+            m.add_command(label="💾 Instant Book Backup (.db)", state=state_flag, command=self.backup_database_now)
 
         def build_help_menu(m):
             m.add_command(label="⌨️ Keyboard Shortcuts (F1)", command=self.show_shortcuts_help)
-            m.add_command(label="🆕 Version Changelog (V6.5.2a)", command=self.show_changelog_modal)
+            m.add_command(label="🆕 Version Changelog (V6.6)", command=self.show_changelog_modal)
             m.add_command(label="📖 README & Tech Stack", command=self.show_readme_modal)
 
         menus = [
@@ -1541,7 +2055,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             ("📒 Ledgers", build_ledgers_menu),
             ("🧾 Vouchers", build_vouchers_menu),
             ("👁 View & Reports", build_view_menu),
-            ("📤 Export & Print", build_export_menu),
+            ("📥 Import & Export", build_export_menu),
             ("❓ Help", build_help_menu)
         ]
 
@@ -1562,12 +2076,16 @@ class OfflineAccountingProV652a(ctk.CTk):
         self.bind("<F6>", lambda e: self.switch_voucher_mode("Income"))
         self.bind("<Alt-v>", lambda e: self.focus_voucher_entry())
         self.bind("<Alt-V>", lambda e: self.focus_voucher_entry())
+        self.bind("<Control-b>", lambda e: self.toggle_voucher_sidebar())
+        self.bind("<Control-B>", lambda e: self.toggle_voucher_sidebar())
         self.bind("<Alt-e>", lambda e: self.unlock_voucher_for_editing())
         self.bind("<Alt-E>", lambda e: self.unlock_voucher_for_editing())
         self.bind("<Alt-s>", lambda e: self.toggle_split_voucher_mode())
         self.bind("<Alt-S>", lambda e: self.toggle_split_voucher_mode())
         self.bind("<Control-n>", lambda e: self.toggle_calculator_bar())
         self.bind("<Control-N>", lambda e: self.toggle_calculator_bar())
+        self.bind("<Control-i>", lambda e: self.open_import_modal())
+        self.bind("<Control-I>", lambda e: self.open_import_modal())
         self.bind("<Control-l>", lambda e: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all()))
         self.bind("<Control-L>", lambda e: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all()))
         self.bind("<Alt-Key-1>", lambda e: self.switch_main_tab("home") if self.book_is_open else None)
@@ -1642,7 +2160,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         hdr = ctk.CTkFrame(card, corner_radius=10, fg_color="#0F172A")
         hdr.grid(row=0, column=0, columnspan=2, padx=18, pady=(18, 10), sticky="ew")
         ctk.CTkLabel(
-            hdr, text="A/C LEDGER PRO V6.5.2a — SELECT OR CREATE ISOLATED BOOK",
+            hdr, text="TALLYLITE V6.6 — SELECT OR CREATE ISOLATED BOOK",
             font=ctk.CTkFont(size=20, weight="bold"), text_color="#FFFFFF"
         ).pack(anchor="w", padx=18, pady=(12, 2))
         ctk.CTkLabel(
@@ -1736,6 +2254,12 @@ class OfflineAccountingProV652a(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"), command=self.create_book_from_gateway
         ).pack(fill="x", padx=16, pady=6)
 
+        ctk.CTkLabel(right_box, text="──────────── OR ────────────", text_color="gray").pack(pady=8)
+        ctk.CTkButton(
+            right_box, text="📥 Import Existing .db Book Backup", height=34, fg_color="#D97706", hover_color="#B45309",
+            font=ctk.CTkFont(size=12, weight="bold"), command=self.import_db_book_from_gateway
+        ).pack(fill="x", padx=16, pady=4)
+
     def _update_gateway_highlight(self):
         for i, card_w in enumerate(self.gateway_card_widgets):
             if i == self.gateway_selected_idx:
@@ -1826,13 +2350,15 @@ class OfflineAccountingProV652a(ctk.CTk):
         if not expr:
             return
         try:
-            res = safe_numeric_eval(expr)
+            res = float(eval(expr, {"__builtins__": None}, {}))
             self.last_calc_value = f"{res:.2f}"
             self.lbl_calc_result.configure(text=f"= ₹{res:,.2f}")
         except Exception:
             self.lbl_calc_result.configure(text="Invalid Math")
 
     def send_calc_to_voucher(self):
+        if not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.voucher_locked_preview:
             self.unlock_voucher_for_editing()
         self.evaluate_calculator()
@@ -1841,46 +2367,27 @@ class OfflineAccountingProV652a(ctk.CTk):
             self.ent_amount.insert(0, self.last_calc_value)
             self.ent_amount.focus_set()
 
+    # ==========================================================================
+    # V6.6 WORKSPACE LAYOUT:
+    # Full-height Left Voucher Sidebar + Right Side (KPIs, Bank Bar, Main Tabs)
+    # ==========================================================================
     def _build_accounting_workspace(self):
-        self.accounting_frame.grid_columnconfigure(0, weight=1)
-        self.accounting_frame.grid_rowconfigure(2, weight=1)
+        self.accounting_frame.grid_columnconfigure(0, weight=0)
+        self.accounting_frame.grid_columnconfigure(1, weight=1)
+        self.accounting_frame.grid_rowconfigure(0, weight=1)
 
-        self.top_container = ctk.CTkFrame(self.accounting_frame, corner_radius=10, fg_color=("#FFFFFF", "#1E293B"))
-        self.top_container.grid(row=0, column=0, padx=12, pady=(8, 4), sticky="ew")
-        self.top_container.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        # Far-left collapsed vertical icon strip (ONLY visible when Voucher Sidebar is hidden)
+        self.collapsed_left_strip = ctk.CTkFrame(
+            self.accounting_frame, width=48, corner_radius=10,
+            fg_color=("#0F172A", "#020617"), border_width=1, border_color="#334155"
+        )
+        self._build_collapsed_left_strip()
 
-        comp_strip = ctk.CTkFrame(self.top_container, fg_color="transparent")
-        comp_strip.grid(row=0, column=0, columnspan=4, padx=12, pady=(6, 2), sticky="ew")
-
-        self.lbl_comp_badge = ctk.CTkLabel(comp_strip, text="🏢 My First Book", font=ctk.CTkFont(size=16, weight="bold"), text_color=("#0F172A", "#F8FAFC"))
-        self.lbl_comp_badge.pack(side="left")
-
-        ctk.CTkButton(comp_strip, text="Switch Book (F3)", width=130, height=28, fg_color="#2563EB", font=ctk.CTkFont(size=12, weight="bold"), command=self.show_company_gateway_screen).pack(side="left", padx=8)
-        ctk.CTkButton(comp_strip, text="🧮 Calculator (Ctrl+N)", width=145, height=28, fg_color="#059669", font=ctk.CTkFont(size=12, weight="bold"), command=self.toggle_calculator_bar).pack(side="left", padx=4)
-
-        self.cmb_period = ctk.CTkOptionMenu(comp_strip, values=ANALYTICS_PERIODS, width=155, height=28, font=ctk.CTkFont(size=12, weight="bold"), command=self.on_period_filter_change)
-        self.cmb_period.set("FY 2026-27")
-        self.cmb_period.pack(side="right", padx=6)
-        ctk.CTkLabel(comp_strip, text="📊 Period:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="right", padx=2)
-
-        self.custom_date_frame = ctk.CTkFrame(comp_strip, fg_color="transparent")
-        self.ent_custom_from = ctk.CTkEntry(self.custom_date_frame, placeholder_text="From YYYY-MM-DD", width=115, height=26)
-        self.ent_custom_from.pack(side="left", padx=2)
-        ctk.CTkLabel(self.custom_date_frame, text="to").pack(side="left", padx=2)
-        self.ent_custom_to = ctk.CTkEntry(self.custom_date_frame, placeholder_text="To YYYY-MM-DD", width=115, height=26)
-        self.ent_custom_to.pack(side="left", padx=2)
-        ctk.CTkButton(self.custom_date_frame, text="Apply", width=55, height=26, fg_color="#059669", command=self.refresh_all).pack(side="left", padx=4)
-
-        self.lbl_tot_in = self._create_kpi_card(self.top_container, 1, 0, "TOTAL MONEY IN", "#059669")
-        self.lbl_tot_out = self._create_kpi_card(self.top_container, 1, 1, "TOTAL MONEY OUT", "#DC2626")
-        self.lbl_net_flow = self._create_kpi_card(self.top_container, 1, 2, "NET SAVINGS FLOW", "#2563EB")
-        self.lbl_liquid = self._create_kpi_card(self.top_container, 1, 3, "TOTAL LIQUID BALANCE", "#7C3AED")
-
-        self.bank_bar = ctk.CTkFrame(self.accounting_frame, corner_radius=10, fg_color=("#F8FAFC", "#1E293B"))
-        self.bank_bar.grid(row=1, column=0, padx=12, pady=3, sticky="ew")
-
-        self.paned = tk.PanedWindow(self.accounting_frame, orient=tk.HORIZONTAL, sashwidth=7, sashrelief=tk.RAISED, bg="#CBD5E1", bd=0, opaqueresize=True)
-        self.paned.grid(row=2, column=0, padx=12, pady=(3, 8), sticky="nsew")
+        self.paned = tk.PanedWindow(
+            self.accounting_frame, orient=tk.HORIZONTAL,
+            sashwidth=7, sashrelief=tk.RAISED, bg="#CBD5E1", bd=0, opaqueresize=True
+        )
+        self.paned.grid(row=0, column=1, padx=10, pady=8, sticky="nsew")
 
         self.left_pane_holder = ctk.CTkFrame(self.paned, fg_color="transparent")
         self.right_pane_holder = ctk.CTkFrame(self.paned, fg_color="transparent")
@@ -1888,8 +2395,80 @@ class OfflineAccountingProV652a(ctk.CTk):
         self._build_left_voucher_panel()
         self._build_right_structured_views()
 
-        self.paned.add(self.left_pane_holder, minsize=345, width=435)
-        self.paned.add(self.right_pane_holder, minsize=620)
+        self.paned.add(self.left_pane_holder, minsize=340, width=420)
+        self.paned.add(self.right_pane_holder, minsize=650)
+
+    def _build_collapsed_left_strip(self):
+        strip_Buttons = [
+            ("◧", "Expand Voucher Panel (Ctrl+B)", "#2563EB", "#1D4ED8", self.show_voucher_sidebar),
+            ("🧾", "New Voucher Entry (Alt+V)", "#059669", "#047857", self.focus_voucher_entry),
+            ("➕", "Create New Ledger (Ctrl+L)", "#0D9488", "#0F766E", lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all())),
+            ("⚙️", "Manage Ledgers (Alt+3)", "#334155", "#475569", lambda: self.switch_main_tab("ledgers")),
+            ("📒", "Daybook / Transactions (Alt+2)", "#334155", "#475569", lambda: self.switch_main_tab("daybook")),
+            ("📈", "Financial Reports (Alt+4)", "#334155", "#475569", lambda: self.switch_main_tab("reports")),
+            ("🏠", "Home Dashboard (Alt+1)", "#334155", "#475569", lambda: self.switch_main_tab("home")),
+            ("📥", "Import Data / Restore (Ctrl+I)", "#7C3AED", "#6D28D9", self.open_import_modal),
+            ("🧮", "Calculator Bar (Ctrl+N)", "#334155", "#475569", self.toggle_calculator_bar),
+        ]
+        for idx, (icon_txt, tip_txt, bg_c, hov_c, cmd_fn) in enumerate(strip_Buttons):
+            btn = ctk.CTkButton(
+                self.collapsed_left_strip,
+                text=icon_txt,
+                width=38,
+                height=38,
+                corner_radius=8,
+                fg_color=bg_c,
+                hover_color=hov_c,
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                command=cmd_fn
+            )
+            btn.pack(padx=5, pady=(8 if idx == 0 else 4, 4))
+
+        ctk.CTkButton(
+            self.collapsed_left_strip,
+            text="🏢",
+            width=38,
+            height=38,
+            corner_radius=8,
+            fg_color="#D97706",
+            hover_color="#B45309",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            command=self.show_company_gateway_screen
+        ).pack(side="bottom", padx=5, pady=8)
+
+    def toggle_voucher_sidebar(self):
+        if not self.book_is_open:
+            return
+        self.close_all_inline_dropdowns()
+        if self.voucher_sidebar_visible:
+            self.hide_voucher_sidebar()
+        else:
+            self.show_voucher_sidebar()
+
+    def hide_voucher_sidebar(self):
+        if not self.voucher_sidebar_visible:
+            return
+        try:
+            self.paned.forget(self.left_pane_holder)
+        except Exception:
+            pass
+        self.voucher_sidebar_visible = False
+        self.collapsed_left_strip.grid(row=0, column=0, padx=(8, 0), pady=8, sticky="ns")
+        self.paned.grid_configure(padx=(6, 10))
+        self._return_focus_to_active_table()
+
+    def show_voucher_sidebar(self):
+        if self.voucher_sidebar_visible:
+            return
+        self.collapsed_left_strip.grid_forget()
+        self.paned.grid_configure(padx=10)
+        try:
+            self.paned.add(self.left_pane_holder, before=self.right_pane_holder, minsize=340, width=420)
+        except Exception:
+            self.paned.add(self.left_pane_holder, minsize=340, width=420)
+        self.voucher_sidebar_visible = True
 
     def on_period_filter_change(self, choice: str):
         self.current_period = choice
@@ -1901,10 +2480,10 @@ class OfflineAccountingProV652a(ctk.CTk):
 
     def _create_kpi_card(self, parent, row, col, title, color):
         card = ctk.CTkFrame(parent, corner_radius=8, fg_color=("#F1F5F9", "#0F172A"))
-        card.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
-        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color="gray").pack(pady=(6, 0))
-        val_lbl = ctk.CTkLabel(card, text="₹0.00", font=ctk.CTkFont(size=18, weight="bold"), text_color=color)
-        val_lbl.pack(pady=(0, 6))
+        card.grid(row=row, column=col, padx=5, pady=5, sticky="ew")
+        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(5, 0))
+        val_lbl = ctk.CTkLabel(card, text="₹0.00", font=ctk.CTkFont(size=16, weight="bold"), text_color=color)
+        val_lbl.pack(pady=(0, 5))
         return val_lbl
 
     def _build_left_voucher_panel(self):
@@ -1917,9 +2496,21 @@ class OfflineAccountingProV652a(ctk.CTk):
         hdr_row = ctk.CTkFrame(self.left_panel, fg_color="transparent")
         hdr_row.pack(fill="x", pady=(2, 2))
         ctk.CTkLabel(hdr_row, text="Voucher Entry (Alt+V)", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
-        ctk.CTkButton(hdr_row, text="+ New Ledger", width=95, height=26, fg_color="#2563EB", command=lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all())).pack(side="right")
 
-        self.lbl_vch_hint = ctk.CTkLabel(self.left_panel, text="New Entry Mode — Type or select ledgers below", font=ctk.CTkFont(size=11, weight="bold"), text_color="#059669")
+        self.btn_sidebar_toggle = ctk.CTkButton(
+            hdr_row, text="◧", width=32, height=28,
+            fg_color="#E2E8F0", hover_color="#CBD5E1", text_color="#0F172A",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            command=self.toggle_voucher_sidebar
+        )
+        self.btn_sidebar_toggle.pack(side="right", padx=(4, 0))
+
+        ctk.CTkButton(
+            hdr_row, text="+ New Ledger", width=92, height=28, fg_color="#2563EB",
+            command=lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all())
+        ).pack(side="right")
+
+        self.lbl_vch_hint = ctk.CTkLabel(self.left_panel, text="New Entry Mode — Type or select ledgers below (Ctrl+B hides panel)", font=ctk.CTkFont(size=11, weight="bold"), text_color="#059669")
         self.lbl_vch_hint.pack(anchor="w", pady=(0, 6))
 
         ctk.CTkLabel(self.left_panel, text="Date (YYYY-MM-DD) [F2]:", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
@@ -2092,9 +2683,6 @@ class OfflineAccountingProV652a(ctk.CTk):
         self.cat_tree.bind("<Double-1>", self.on_quick_cat_double_click)
         self.cat_tree.bind("<Return>", self.on_quick_cat_double_click)
 
-    # ==========================================================================
-    # LOCKED PREVIEW vs UNLOCKED EDIT MODE HELPERS
-    # ==========================================================================
     def _set_voucher_fields_enabled(self, enabled: bool):
         st = "normal" if enabled else "disabled"
         self.ent_date.configure(state=st)
@@ -2126,6 +2714,8 @@ class OfflineAccountingProV652a(ctk.CTk):
     def unlock_voucher_for_editing(self):
         if not self.book_is_open or self.has_open_modal():
             return
+        if not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.selected_tx_id is None and self.selected_voucher_group_id == 0:
             self.focus_voucher_entry()
             return
@@ -2173,6 +2763,8 @@ class OfflineAccountingProV652a(ctk.CTk):
     def toggle_split_voucher_mode(self, steal_focus=True):
         if not self.book_is_open or self.has_open_modal():
             return
+        if steal_focus and not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.voucher_locked_preview and steal_focus:
             return
         if self.cmb_type.get() == "Transfer":
@@ -2287,7 +2879,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         if not target_str:
             return 0.0
         try:
-            target_val = safe_numeric_eval(target_str)
+            target_val = float(eval(target_str, {"__builtins__": None}, {}))
         except Exception:
             return 0.0
         used = 0.0
@@ -2297,7 +2889,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             s = r["amt"].get().strip()
             if s:
                 try:
-                    used += safe_numeric_eval(s)
+                    used += float(eval(s, {"__builtins__": None}, {}))
                 except Exception:
                     pass
         return max(0.0, target_val - used)
@@ -2371,7 +2963,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             val_s = r["amt"].get().strip()
             if val_s:
                 try:
-                    total += safe_numeric_eval(val_s)
+                    total += float(eval(val_s, {"__builtins__": None}, {}))
                 except Exception:
                     pass
         rem = self._compute_remaining_voucher_amount()
@@ -2384,7 +2976,8 @@ class OfflineAccountingProV652a(ctk.CTk):
     def focus_voucher_entry(self):
         if not self.book_is_open or self.has_open_modal():
             return
-        # If currently viewing a locked preview, Alt+V starts a clean New Entry!
+        if not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.voucher_locked_preview:
             self.clear_form()
         if self.cmb_type.get() == "Transfer":
@@ -2400,6 +2993,8 @@ class OfflineAccountingProV652a(ctk.CTk):
     def focus_voucher_date(self):
         if not self.book_is_open or self.has_open_modal():
             return
+        if not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.voucher_locked_preview:
             self.clear_form()
         self.ent_date.focus_set()
@@ -2444,29 +3039,73 @@ class OfflineAccountingProV652a(ctk.CTk):
             self.lbl_account.configure(text="Paid From / Credit Account:")
         self.update_live_voucher_balances()
 
+    # ==========================================================================
+    # RIGHT PANE: TOP KPI CONTAINER + BANK BAR + NAV HEADER + TAB BODY
+    # ==========================================================================
     def _build_right_structured_views(self):
-        self.right_pane_holder.grid_rowconfigure(1, weight=1)
         self.right_pane_holder.grid_columnconfigure(0, weight=1)
+        self.right_pane_holder.grid_rowconfigure(3, weight=1)
 
-        self.nav_header = ctk.CTkFrame(self.right_pane_holder, height=48, corner_radius=10, fg_color=("#FFFFFF", "#1E293B"))
-        self.nav_header.grid(row=0, column=0, padx=(3, 0), pady=(0, 6), sticky="ew")
+        self.top_container = ctk.CTkFrame(self.right_pane_holder, corner_radius=10, fg_color=("#FFFFFF", "#1E293B"))
+        self.top_container.grid(row=0, column=0, padx=(3, 0), pady=(0, 4), sticky="ew")
+        self.top_container.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        comp_strip = ctk.CTkFrame(self.top_container, fg_color="transparent")
+        comp_strip.grid(row=0, column=0, columnspan=4, padx=10, pady=(6, 2), sticky="ew")
+
+        self.btn_restore_sidebar = ctk.CTkButton(
+            comp_strip, text="◧ + Voucher Entry (Alt+V / Ctrl+B)", height=28,
+            fg_color="#059669", hover_color="#047857",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.focus_voucher_entry
+        )
+
+        self.lbl_comp_badge = ctk.CTkLabel(comp_strip, text="🏢 Jd x 2026", font=ctk.CTkFont(size=15, weight="bold"), text_color=("#0F172A", "#F8FAFC"))
+        self.lbl_comp_badge.pack(side="left")
+
+        ctk.CTkButton(comp_strip, text="Switch Book (F3)", width=125, height=26, fg_color="#2563EB", font=ctk.CTkFont(size=12, weight="bold"), command=self.show_company_gateway_screen).pack(side="left", padx=8)
+        ctk.CTkButton(comp_strip, text="🧮 Calculator (Ctrl+N)", width=140, height=26, fg_color="#059669", font=ctk.CTkFont(size=12, weight="bold"), command=self.toggle_calculator_bar).pack(side="left", padx=4)
+
+        self.cmb_period = ctk.CTkOptionMenu(comp_strip, values=ANALYTICS_PERIODS, width=150, height=26, font=ctk.CTkFont(size=12, weight="bold"), command=self.on_period_filter_change)
+        self.cmb_period.set("FY 2026-27")
+        self.cmb_period.pack(side="right", padx=6)
+        ctk.CTkLabel(comp_strip, text="📊 Period:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="right", padx=2)
+
+        self.custom_date_frame = ctk.CTkFrame(comp_strip, fg_color="transparent")
+        self.ent_custom_from = ctk.CTkEntry(self.custom_date_frame, placeholder_text="From YYYY-MM-DD", width=110, height=25)
+        self.ent_custom_from.pack(side="left", padx=2)
+        ctk.CTkLabel(self.custom_date_frame, text="to").pack(side="left", padx=2)
+        self.ent_custom_to = ctk.CTkEntry(self.custom_date_frame, placeholder_text="To YYYY-MM-DD", width=110, height=25)
+        self.ent_custom_to.pack(side="left", padx=2)
+        ctk.CTkButton(self.custom_date_frame, text="Apply", width=55, height=25, fg_color="#059669", command=self.refresh_all).pack(side="left", padx=4)
+
+        self.lbl_tot_in = self._create_kpi_card(self.top_container, 1, 0, "TOTAL MONEY IN", "#059669")
+        self.lbl_tot_out = self._create_kpi_card(self.top_container, 1, 1, "TOTAL MONEY OUT", "#DC2626")
+        self.lbl_net_flow = self._create_kpi_card(self.top_container, 1, 2, "NET SAVINGS FLOW", "#2563EB")
+        self.lbl_liquid = self._create_kpi_card(self.top_container, 1, 3, "TOTAL LIQUID BALANCE", "#7C3AED")
+
+        self.bank_bar = ctk.CTkFrame(self.right_pane_holder, corner_radius=10, fg_color=("#F8FAFC", "#1E293B"))
+        self.bank_bar.grid(row=1, column=0, padx=(3, 0), pady=(0, 4), sticky="ew")
+
+        self.nav_header = ctk.CTkFrame(self.right_pane_holder, height=44, corner_radius=10, fg_color=("#FFFFFF", "#1E293B"))
+        self.nav_header.grid(row=2, column=0, padx=(3, 0), pady=(0, 4), sticky="ew")
         self.nav_header.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         nav_font = ctk.CTkFont(size=13, weight="bold")
-        self.btn_nav_home = ctk.CTkButton(self.nav_header, text="🏠 Home Dashboard (Alt+1)", height=36, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("home"))
-        self.btn_nav_home.grid(row=0, column=0, padx=4, pady=6, sticky="ew")
+        self.btn_nav_home = ctk.CTkButton(self.nav_header, text="🏠 Home Dashboard (Alt+1)", height=34, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("home"))
+        self.btn_nav_home.grid(row=0, column=0, padx=4, pady=5, sticky="ew")
 
-        self.btn_nav_daybook = ctk.CTkButton(self.nav_header, text="📒 All Transactions (Alt+2)", height=36, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("daybook"))
-        self.btn_nav_daybook.grid(row=0, column=1, padx=4, pady=6, sticky="ew")
+        self.btn_nav_daybook = ctk.CTkButton(self.nav_header, text="📒 All Transactions (Alt+2)", height=34, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("daybook"))
+        self.btn_nav_daybook.grid(row=0, column=1, padx=4, pady=5, sticky="ew")
 
-        self.btn_nav_ledgers = ctk.CTkButton(self.nav_header, text="⚙️ Manage Ledgers (Alt+3)", height=36, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("ledgers"))
-        self.btn_nav_ledgers.grid(row=0, column=2, padx=4, pady=6, sticky="ew")
+        self.btn_nav_ledgers = ctk.CTkButton(self.nav_header, text="⚙️ Manage Ledgers (Alt+3)", height=34, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("ledgers"))
+        self.btn_nav_ledgers.grid(row=0, column=2, padx=4, pady=5, sticky="ew")
 
-        self.btn_nav_reports = ctk.CTkButton(self.nav_header, text="📈 Trial Bal / P&L / B/S (Alt+4)", height=36, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("reports"))
-        self.btn_nav_reports.grid(row=0, column=3, padx=4, pady=6, sticky="ew")
+        self.btn_nav_reports = ctk.CTkButton(self.nav_header, text="📈 Trial Bal / P&L / B/S (Alt+4)", height=34, corner_radius=8, font=nav_font, command=lambda: self.switch_main_tab("reports"))
+        self.btn_nav_reports.grid(row=0, column=3, padx=4, pady=5, sticky="ew")
 
         self.right_body = ctk.CTkFrame(self.right_pane_holder, corner_radius=10, fg_color=("#FFFFFF", "#1E293B"))
-        self.right_body.grid(row=1, column=0, padx=(3, 0), sticky="nsew")
+        self.right_body.grid(row=3, column=0, padx=(3, 0), sticky="nsew")
         self.right_body.grid_rowconfigure(0, weight=1)
         self.right_body.grid_columnconfigure(0, weight=1)
 
@@ -2560,63 +3199,103 @@ class OfflineAccountingProV652a(ctk.CTk):
             self.after(40, lambda: self._focus_and_select_tree(self.fin_tree, sync_form=False))
 
     # ==========================================================================
-    # HOME DASHBOARD: VERTICAL STACK ON LEFT (TOP OUTFLOWS + DUE/PAY LATER) & GATEWAY SPACE ON RIGHT
+    # HOME DASHBOARD: LEFT STACK (OUTFLOWS + DUES) & INTERACTIVE GATEWAY PANEL
     # ==========================================================================
     def _build_home_dashboard_ui(self):
-        self.tab_home.grid_columnconfigure(0, weight=5)
-        self.tab_home.grid_columnconfigure(1, weight=5)
+        self.tab_home.grid_columnconfigure(0, weight=6)
+        self.tab_home.grid_columnconfigure(1, weight=4)
         self.tab_home.grid_rowconfigure(1, weight=1)
         self.tab_home.grid_rowconfigure(2, weight=1)
 
         action_bar = ctk.CTkFrame(self.tab_home, corner_radius=10, fg_color=("#F1F5F9", "#0F172A"))
-        action_bar.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 6), sticky="ew")
+        action_bar.grid(row=0, column=0, columnspan=2, padx=10, pady=(8, 4), sticky="ew")
 
-        ctk.CTkLabel(action_bar, text="⚡ Quick Actions:", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=(12, 8), pady=8)
-        ctk.CTkButton(action_bar, text="🏢 Switch Book (F3)", height=30, fg_color="#2563EB", command=self.show_company_gateway_screen).pack(side="left", padx=4, pady=8)
-        ctk.CTkButton(action_bar, text="➕ Create Ledger (Ctrl+L)", height=30, fg_color="#059669", command=lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all())).pack(side="left", padx=4, pady=8)
-        ctk.CTkButton(action_bar, text="📈 Financial Reports (Alt+4)", height=30, fg_color="#7C3AED", command=lambda: self.switch_main_tab("reports")).pack(side="left", padx=4, pady=8)
-        ctk.CTkButton(action_bar, text="📌 Pin Top Banks", height=30, fg_color="#475569", command=self.open_pin_manager_dialog).pack(side="left", padx=4, pady=8)
-        ctk.CTkButton(action_bar, text="💾 Backup Book", height=30, fg_color="#D97706", command=self.backup_database_now).pack(side="right", padx=12, pady=8)
+        ctk.CTkLabel(action_bar, text="⚡ Quick Actions:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 6), pady=6)
+        ctk.CTkButton(action_bar, text="🏢 Switch Book (F3)", height=28, fg_color="#2563EB", command=self.show_company_gateway_screen).pack(side="left", padx=3, pady=6)
+        ctk.CTkButton(action_bar, text="➕ Create Ledger (Ctrl+L)", height=28, fg_color="#059669", command=lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all())).pack(side="left", padx=3, pady=6)
+        ctk.CTkButton(action_bar, text="◧ Toggle Voucher Panel (Ctrl+B)", height=28, fg_color="#0F172A", command=self.toggle_voucher_sidebar).pack(side="left", padx=3, pady=6)
+        ctk.CTkButton(action_bar, text="📌 Pin Top Banks", height=28, fg_color="#475569", command=self.open_pin_manager_dialog).pack(side="left", padx=3, pady=6)
+        ctk.CTkButton(action_bar, text="💾 Backup Book", height=28, fg_color="#D97706", command=self.backup_database_now).pack(side="right", padx=(4, 10), pady=6)
+        ctk.CTkButton(action_bar, text="📥 Import (Ctrl+I)", height=28, fg_color="#7C3AED", hover_color="#6D28D9", command=self.open_import_modal).pack(side="right", padx=4, pady=6)
 
         exp_outer = ctk.CTkFrame(self.tab_home, corner_radius=10, fg_color=("#F8FAFC", "#1E293B"), border_width=1, border_color="#CBD5E1")
-        exp_outer.grid(row=1, column=0, padx=(10, 5), pady=(4, 5), sticky="nsew")
+        exp_outer.grid(row=1, column=0, padx=(10, 5), pady=(4, 4), sticky="nsew")
         exp_outer.grid_rowconfigure(1, weight=1)
         exp_outer.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(exp_outer, text="📉 Top Outflows Breakdown (Click Any Item to Open Ledger)", font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, padx=12, pady=(8, 2), sticky="ew")
+        ctk.CTkLabel(exp_outer, text="📉 Top Outflows Breakdown (Click Any Item to Open Ledger)", font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, padx=12, pady=(6, 2), sticky="ew")
         self.home_exp_card = ctk.CTkScrollableFrame(exp_outer, corner_radius=8, fg_color="transparent")
         self.home_exp_card.grid(row=1, column=0, padx=6, pady=(0, 6), sticky="nsew")
 
         due_outer = ctk.CTkFrame(self.tab_home, corner_radius=10, fg_color=("#F8FAFC", "#1E293B"), border_width=1, border_color="#CBD5E1")
-        due_outer.grid(row=2, column=0, padx=(10, 5), pady=(5, 10), sticky="nsew")
+        due_outer.grid(row=2, column=0, padx=(10, 5), pady=(4, 8), sticky="nsew")
         due_outer.grid_rowconfigure(1, weight=1)
         due_outer.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(due_outer, text="🤝 Due / Pay Later & Party Balances (Receivables & Payables)", font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, padx=12, pady=(8, 2), sticky="ew")
+        ctk.CTkLabel(due_outer, text="🤝 Due / Pay Later & Party Balances (Receivables & Payables)", font=ctk.CTkFont(size=13, weight="bold"), anchor="w").grid(row=0, column=0, padx=12, pady=(6, 2), sticky="ew")
         self.home_lenden_card = ctk.CTkScrollableFrame(due_outer, corner_radius=8, fg_color="transparent")
         self.home_lenden_card.grid(row=1, column=0, padx=6, pady=(0, 6), sticky="nsew")
 
         self.gateway_right_panel = ctk.CTkFrame(self.tab_home, corner_radius=10, fg_color=("#F8FAFC", "#1E293B"), border_width=1, border_color="#CBD5E1")
-        self.gateway_right_panel.grid(row=1, column=1, rowspan=2, padx=(5, 10), pady=(4, 10), sticky="nsew")
+        self.gateway_right_panel.grid(row=1, column=1, rowspan=2, padx=(5, 10), pady=(4, 8), sticky="nsew")
         self.gateway_right_panel.grid_columnconfigure(0, weight=1)
         self.gateway_right_panel.grid_rowconfigure(1, weight=1)
 
         gw_hdr = ctk.CTkFrame(self.gateway_right_panel, corner_radius=8, fg_color="#1E3A8A")
-        gw_hdr.grid(row=0, column=0, padx=12, pady=(12, 6), sticky="ew")
-        ctk.CTkLabel(gw_hdr, text="GATEWAY OF TALLY (COMMAND PANEL)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#FFFFFF").pack(pady=8)
+        gw_hdr.grid(row=0, column=0, padx=10, pady=(10, 4), sticky="ew")
+        ctk.CTkLabel(gw_hdr, text="GATEWAY OF TALLYLITE", font=ctk.CTkFont(size=14, weight="bold"), text_color="#FFFFFF").pack(pady=7)
 
-        gw_placeholder = ctk.CTkFrame(self.gateway_right_panel, fg_color="transparent")
-        gw_placeholder.grid(row=1, column=0, padx=16, pady=16, sticky="nsew")
-        ctk.CTkLabel(
-            gw_placeholder,
-            text="Reserved for Gateway of Tally Menu\n(Phase 3 Implementation)",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#64748B",
-            justify="center"
-        ).pack(expand=True)
+        gw_scroll = ctk.CTkScrollableFrame(self.gateway_right_panel, corner_radius=8, fg_color="transparent")
+        gw_scroll.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
+        gw_scroll.grid_columnconfigure(0, weight=1)
+
+        def add_gw_section(title_txt):
+            ctk.CTkLabel(
+                gw_scroll, text=title_txt,
+                font=ctk.CTkFont(size=11, weight="bold"), text_color="#1E3A8A"
+            ).pack(anchor="w", padx=6, pady=(8, 2))
+
+        def add_gw_btn(label_txt, shortcut_txt, cmd_fn, color="#FFFFFF", txt_col="#0F172A"):
+            row_b = ctk.CTkButton(
+                gw_scroll,
+                text=f"  {label_txt}   [{shortcut_txt}]",
+                anchor="w",
+                height=30,
+                corner_radius=6,
+                fg_color=color,
+                hover_color="#DBEAFE",
+                text_color=txt_col,
+                border_width=1,
+                border_color="#CBD5E1",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=cmd_fn
+            )
+            row_b.pack(fill="x", padx=4, pady=2)
+
+        add_gw_section("MASTERS")
+        add_gw_btn("➕ Create / Alter Ledger", "Ctrl+L", lambda: self.open_create_ledger_modal(on_success=lambda _: self.refresh_all()))
+        add_gw_btn("⚙️ Chart of Accounts / Ledgers", "Alt+3", lambda: self.switch_main_tab("ledgers"))
+
+        add_gw_section("TRANSACTIONS / VOUCHERS")
+        add_gw_btn("💸 Expense / Payment Voucher", "F5", lambda: self.switch_voucher_mode("Expense"))
+        add_gw_btn("💰 Income / Receipt Voucher", "F6", lambda: self.switch_voucher_mode("Income"))
+        add_gw_btn("🔄 Contra / Bank-Cash Transfer", "F4", lambda: self.switch_voucher_mode("Transfer"))
+        add_gw_btn("🔀 Multi-Line Split Voucher", "Alt+S", self.toggle_split_voucher_mode)
+
+        add_gw_section("FINANCIAL REPORTS & BOOKS")
+        add_gw_btn("📒 Daybook / All Transactions", "Alt+2", lambda: self.switch_main_tab("daybook"))
+        add_gw_btn("⚖️ Trial Balance", "Alt+4", lambda: (self.seg_fin_report.set("⚖️ Trial Balance"), self.switch_main_tab("reports")))
+        add_gw_btn("📊 Profit & Loss A/c", "Alt+4", lambda: (self.seg_fin_report.set("📊 Profit & Loss A/c"), self.switch_main_tab("reports")))
+        add_gw_btn("🏛 Balance Sheet", "Alt+4", lambda: (self.seg_fin_report.set("🏛 Balance Sheet"), self.switch_main_tab("reports")))
+
+        add_gw_section("UTILITIES & DATA")
+        add_gw_btn("◧ Show / Hide Voucher Panel", "Ctrl+B", self.toggle_voucher_sidebar)
+        add_gw_btn("📥 Universal Import & Restore", "Ctrl+I", self.open_import_modal)
+        add_gw_btn("🏛 Export Tally XML", "XML", self.export_tally_xml)
+        add_gw_btn("🏢 Switch / Create Book", "F3", self.show_company_gateway_screen)
 
     # ==========================================================================
-    # TAB 2: ALL TRANSACTIONS / DAYBOOK (COLLAPSIBLE TREE-MAP + UNLOCK EDIT BUTTON)
+    # TAB 2: ALL TRANSACTIONS / DAYBOOK
     # ==========================================================================
     def _build_daybook_ui(self):
         self.tab_daybook.grid_rowconfigure(2, weight=1)
@@ -2648,7 +3327,8 @@ class OfflineAccountingProV652a(ctk.CTk):
         self.flt_cat.pack(side="left", padx=2)
 
         ctk.CTkButton(f_bar, text="🗑 Delete", width=75, fg_color="#DC2626", hover_color="#B91C1C", command=self.delete_entry).pack(side="right", padx=2)
-        ctk.CTkButton(f_bar, text="📊 CSV", width=65, fg_color="#059669", command=self.export_daybook_csv).pack(side="right", padx=2)
+        ctk.CTkButton(f_bar, text="📊 Export CSV", width=88, fg_color="#059669", command=self.export_daybook_csv).pack(side="right", padx=2)
+        ctk.CTkButton(f_bar, text="📥 Import", width=78, fg_color="#7C3AED", hover_color="#6D28D9", command=self.open_import_modal).pack(side="right", padx=2)
         ctk.CTkButton(f_bar, text="🔓 Edit (Alt+E)", width=105, fg_color="#2563EB", hover_color="#1D4ED8", command=self.unlock_voucher_for_editing).pack(side="right", padx=3)
 
         tot_strip = ctk.CTkFrame(self.tab_daybook, corner_radius=8, fg_color=("#F1F5F9", "#0F172A"))
@@ -2715,7 +3395,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         self.refresh_daybook_table(focus_table=False)
 
     # ==========================================================================
-    # TAB 3: MANAGE LEDGERS (ZERO-MOUSE KEYBOARD ARROWS + ENTER STATEMENT OPEN)
+    # TAB 3: MANAGE LEDGERS
     # ==========================================================================
     def _build_ledgers_and_profile_ui(self):
         self.tab_ledgers.grid_rowconfigure(0, weight=1)
@@ -2860,7 +3540,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         return lbl
 
     # ==========================================================================
-    # TAB 4: FINANCIAL REPORTS (TB, P&L, B/S WITH KEYBOARD ENTER & ARROWS)
+    # TAB 4: FINANCIAL REPORTS
     # ==========================================================================
     def _build_financial_reports_ui(self):
         self.tab_reports.grid_rowconfigure(1, weight=1)
@@ -3000,7 +3680,6 @@ class OfflineAccountingProV652a(ctk.CTk):
             self.toggle_calculator_bar()
             return
 
-        # 1. If actively editing an existing unlocked voucher -> Tally Quit/Lock prompt
         if (self.selected_tx_id is not None or self.selected_voucher_group_id > 0) and not self.voucher_locked_preview:
             if messagebox.askyesno("Cancel Edit? (Tally ESC)", "Discard unsaved edits and lock this voucher back?"):
                 if self.selected_tx_id is not None:
@@ -3008,18 +3687,15 @@ class OfflineAccountingProV652a(ctk.CTk):
                 self._return_focus_to_active_table()
             return
 
-        # 2. If mid-way typing a brand-new voucher -> Tally Quit/Clear prompt
         if self.selected_tx_id is None and self.selected_voucher_group_id == 0 and self.has_unsaved_voucher_draft():
             if messagebox.askyesno("Quit Voucher Entry? (Tally ESC)", "Clear / Quit the current unsaved voucher entry?"):
                 self.clear_form()
             return
 
-        # 3. If viewing a single ledger statement -> Back to Manage Ledgers list
         if self.active_drill_ledger and self.current_tab_key == "ledgers":
             self.close_ledger_profile()
             return
 
-        # 4. If viewing a locked preview -> Clear preview back to New Entry Mode & keep focus on table
         if self.voucher_locked_preview:
             self.clear_form()
             self._return_focus_to_active_table()
@@ -3038,6 +3714,8 @@ class OfflineAccountingProV652a(ctk.CTk):
     def switch_voucher_mode(self, mode: str):
         if not self.book_is_open or self.has_open_modal():
             return
+        if not self.voucher_sidebar_visible:
+            self.show_voucher_sidebar()
         if self.voucher_locked_preview:
             self.clear_form()
         self.cmb_type.set(mode)
@@ -3088,7 +3766,7 @@ class OfflineAccountingProV652a(ctk.CTk):
                     messagebox.showwarning("Same Ledger Error", f"Split Line #{idx} cannot use the same ledger as the main account ({main_ledger}).")
                     return
                 try:
-                    val = safe_numeric_eval(a_str)
+                    val = float(eval(a_str, {"__builtins__": None}, {}))
                     if val <= 0:
                         raise ValueError
                 except Exception:
@@ -3105,7 +3783,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             bank_amt_str = self.ent_amount.get().strip()
             if bank_amt_str:
                 try:
-                    expected_bank_total = safe_numeric_eval(bank_amt_str)
+                    expected_bank_total = float(eval(bank_amt_str, {"__builtins__": None}, {}))
                 except Exception:
                     messagebox.showerror("Invalid Total Amount", "The Total Voucher Amount box has an invalid number.")
                     self.ent_amount.focus_set()
@@ -3158,7 +3836,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             return
 
         try:
-            amount = safe_numeric_eval(amt_str)
+            amount = float(eval(amt_str, {"__builtins__": None}, {}))
             if amount <= 0:
                 raise ValueError
         except Exception:
@@ -3180,7 +3858,6 @@ class OfflineAccountingProV652a(ctk.CTk):
         if not row:
             return
 
-        # Temporarily enable widgets so we can populate their text cleanly
         self.voucher_locked_preview = False
         self._set_voucher_fields_enabled(True)
 
@@ -3272,7 +3949,6 @@ class OfflineAccountingProV652a(ctk.CTk):
         if sel:
             vals = self.tree.item(sel[0]).get("values", [])
             self._load_from_tree_item_values(vals, lock_preview=True)
-            # Keep keyboard focus strictly inside the Daybook treeview if Daybook is active!
             if self.current_tab_key == "daybook" and self.focus_get() != self.ent_search._entry:
                 self.tree.focus_set()
 
@@ -3332,7 +4008,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         self._set_voucher_fields_enabled(True)
         self.selected_tx_id = None
         self.selected_voucher_group_id = 0
-        self.lbl_vch_hint.configure(text="New Entry Mode — Type or select ledgers below", text_color="#059669")
+        self.lbl_vch_hint.configure(text="New Entry Mode — Type or select ledgers below (Ctrl+B hides panel)", text_color="#059669")
         self.btn_save.configure(text="✔ Save Entry (Enter)", fg_color="#059669", hover_color="#047857")
         self.ac_category.clear_to_placeholder()
         self.ac_account.clear_to_placeholder()
@@ -3469,7 +4145,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         self.refresh_dropdown_cache()
         comp = self.db.get_active_company()
         self.lbl_comp_badge.configure(text=f"🏢 {comp['name']}")
-        self.title(f"TallyLite — [{comp['name']} | {self.current_period}]")
+        self.title(f"TallyLite V6.6 — [{comp['name']} | {self.current_period}]")
 
         self.flt_account.configure(values=["All"] + self.payment_accounts)
         self.flt_cat.configure(values=["All"] + self.voucher_ledgers)
@@ -3493,16 +4169,16 @@ class OfflineAccountingProV652a(ctk.CTk):
         for idx, (b_name, b_data) in enumerate(pinned_banks):
             self.bank_bar.grid_columnconfigure(idx, weight=1)
             card = ctk.CTkFrame(self.bank_bar, corner_radius=8, fg_color=("#FFFFFF", "#0F172A"))
-            card.grid(row=0, column=idx, padx=5, pady=5, sticky="ew")
+            card.grid(row=0, column=idx, padx=5, pady=4, sticky="ew")
 
             icon = "🏦" if b_data["group"] == "Bank Account" else "💵"
             l1 = ctk.CTkLabel(card, text=f"{icon} {b_name}", font=ctk.CTkFont(size=12, weight="bold"), cursor="hand2")
-            l1.pack(pady=(5, 0))
+            l1.pack(pady=(4, 0))
             bal_color = "#059669" if b_data["bal"] >= 0 else "#DC2626"
-            l2 = ctk.CTkLabel(card, text=f"₹{b_data['bal']:,.2f}", font=ctk.CTkFont(size=16, weight="bold"), text_color=bal_color, cursor="hand2")
+            l2 = ctk.CTkLabel(card, text=f"₹{b_data['bal']:,.2f}", font=ctk.CTkFont(size=15, weight="bold"), text_color=bal_color, cursor="hand2")
             l2.pack(pady=1)
             l3 = ctk.CTkLabel(card, text=f"In: ₹{b_data['in']:,.0f}  |  Out: ₹{b_data['out']:,.0f}", font=ctk.CTkFont(size=10), text_color="gray", cursor="hand2")
-            l3.pack(pady=(0, 5))
+            l3.pack(pady=(0, 4))
 
             for widget in (card, l1, l2, l3):
                 widget.bind("<Button-1>", lambda e, n=b_name: self.open_ledger_profile_by_name(n))
@@ -3752,7 +4428,7 @@ class OfflineAccountingProV652a(ctk.CTk):
         if os.path.exists(README_PATH):
             with open(README_PATH, "r", encoding="utf-8") as f:
                 content = f.read()
-        self.active_modal = DocumentViewerModal(self, "📖 README — Tech Stack & Architecture", content)
+        self.active_modal = DocumentViewerModal(self, "📖 TallyLite README — Tech Stack & Architecture", content)
 
     def show_changelog_modal(self):
         if self.has_open_modal():
@@ -3762,7 +4438,51 @@ class OfflineAccountingProV652a(ctk.CTk):
         if os.path.exists(CHANGELOG_PATH):
             with open(CHANGELOG_PATH, "r", encoding="utf-8") as f:
                 content = f.read()
-        self.active_modal = DocumentViewerModal(self, "🆕 Version Changelog (V6.5.2a)", content)
+        self.active_modal = DocumentViewerModal(self, "🆕 TallyLite Version Changelog (V6.6)", content)
+
+    def open_import_modal(self):
+        if not self.book_is_open:
+            return
+        self.close_all_inline_dropdowns()
+        if self.has_open_modal():
+            self.active_modal.lift()
+            return
+        self.active_modal = ImportDataModal(self, self.db, on_complete=self.refresh_all)
+
+    def import_db_book_from_gateway(self):
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Select TallyLite .db Book Backup to Import",
+            initialdir=BACKUP_DIR,
+            filetypes=[("SQLite Book DB", "*.db"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+        ok, msg, _ = self.db.import_external_db_book(path, mode="new")
+        if ok:
+            comp = self.db.get_active_company()
+            self.open_book_and_enter(comp["name"], comp["fy"])
+            messagebox.showinfo("Book Imported", msg)
+        else:
+            messagebox.showerror("Import Error", msg)
+
+    def export_ledgers_master_csv(self):
+        if not self.book_is_open:
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialdir=EXPORT_DIR,
+            initialfile=f"Ledgers_Master_{datetime.now().strftime('%Y%m%d')}.csv",
+            filetypes=[("Excel CSV", "*.csv")]
+        )
+        if not path:
+            return
+        rows = self.db.get_all_ledgers_metadata()
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["Ledger Name", "Account Group", "Opening Balance", "Pin Top Bar", "Notes"])
+            w.writerows(rows)
+        messagebox.showinfo("Ledgers Exported", f"Ledgers Master CSV saved to:\n{path}")
 
     def export_daybook_csv(self):
         if not self.book_is_open:
@@ -3834,7 +4554,7 @@ class OfflineAccountingProV652a(ctk.CTk):
             cr_s = f"₹{r['closing_cr']:,.2f}" if r["closing_cr"] > 0 else "-"
             tb_rows += f"<tr><td><b>{r['name']}</b></td><td>{r['group']}</td><td style='text-align:right;'>₹{r['opening']:,.2f}</td><td style='text-align:right;color:#059669;'>{dr_s}</td><td style='text-align:right;color:#DC2626;'>{cr_s}</td></tr>"
 
-        html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Financial Reports - {comp['name']}</title><style>body {{ font-family: Arial; margin: 30px; }} table {{ width:100%; border-collapse:collapse; margin-top:8px; margin-bottom:24px; }} th, td {{ border:1px solid #CBD5E1; padding:8px; text-align:left; }} th {{ background:#F1F5F9; }}</style></head><body><h2>{comp['name']} — Financial Reports</h2><h3>Trial Balance</h3><table><thead><tr><th>Ledger</th><th>Type</th><th style='text-align:right;'>Opening</th><th style='text-align:right;'>Debit</th><th style='text-align:right;'>Credit</th></tr></thead><tbody>{tb_rows}<tr style='font-weight:bold;background:#F8FAFC;'><td colspan='3'>TOTAL</td><td style='text-align:right;'>₹{fin['tb_total_dr']:,.2f}</td><td style='text-align:right;'>₹{fin['tb_total_cr']:,.2f}</td></tr></tbody></table></body></html>"""
+        html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Financial Reports - {comp['name']}</title><style>body {{ font-family: Arial; margin: 30px; }} table {{ width:100%; border-collapse:collapse; margin-top:8px; margin-bottom:24px; }} th, td {{ border:1px solid #CBD5E1; padding:8px; text-align:left; }} th {{ background:#F1F5F9; }}</style></head><body><h2>{comp['name']} — Financial Reports (TallyLite)</h2><h3>Trial Balance</h3><table><thead><tr><th>Ledger</th><th>Type</th><th style='text-align:right;'>Opening</th><th style='text-align:right;'>Debit</th><th style='text-align:right;'>Credit</th></tr></thead><tbody>{tb_rows}<tr style='font-weight:bold;background:#F8FAFC;'><td colspan='3'>TOTAL</td><td style='text-align:right;'>₹{fin['tb_total_dr']:,.2f}</td><td style='text-align:right;'>₹{fin['tb_total_cr']:,.2f}</td></tr></tbody></table></body></html>"""
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
         webbrowser.open(f"file:///{path.replace(os.sep, '/')}")
@@ -3885,10 +4605,11 @@ class OfflineAccountingProV652a(ctk.CTk):
 
     def show_shortcuts_help(self):
         msg = (
-            "KEYBOARD SHORTCUTS (V6.5.2a — Phase 2 Hotfix):\n"
+            "KEYBOARD SHORTCUTS (TallyLite V6.6):\n"
+            "• Ctrl + B : Show / Hide Left Voucher Sidebar (Full-screen toggle)\n"
             "• Alt + 1 / 2 / 3 / 4 : Switch Tabs (Auto-focuses tables for Up/Down arrows)\n"
             "• Alt + E : Unlock Selected Transaction for Editing (prevents accidental edits!)\n"
-            "• Alt + V : Start New Voucher Entry / Jump to Voucher Box\n"
+            "• Alt + V : Start New Voucher Entry / Re-open Voucher Sidebar\n"
             "• ESC : Tally-style Cancel / Lock Edit / Quit Unsaved Entry\n"
             "• Alt + S : Toggle Multi-Line Split Mode (Supports Dr Split & Cr Split)\n"
             "• Shift + BackSpace or Ctrl + D : Delete current Split Line via keyboard\n"
@@ -3898,5 +4619,5 @@ class OfflineAccountingProV652a(ctk.CTk):
 
 
 if __name__ == "__main__":
-    app = OfflineAccountingProV652a()
+    app = TallyLiteAppV66()
     app.mainloop()

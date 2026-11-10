@@ -1,5 +1,5 @@
 #define MyAppName "TallyLite"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "TallyLite Contributors"
 #define MyAppExeName "TallyLite.exe"
 
@@ -29,6 +29,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "dist\TallyLite\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "ac_logo.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\TallyLite"; Filename: "{app}\TallyLite.exe"; WorkingDir: "{app}"
